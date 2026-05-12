@@ -15,9 +15,10 @@ const FALLBACK_SCHOOLS = [
   { id: 134130, name: 'University of Florida', state: 'FL', city: 'Gainesville', region: 'Southeast', isPublic: true, tuitionIS: 6381, tuitionOOS: 28659, books: 1340, roomBoardOn: 12120, otherOn: 2400, admitRate: 0.24, enrollment: 38246 }
 ];
 
-const OVERLAYS = {
-  185590: { specialPrograms: ['amy-msu-waiver'], waiverPct: 0.60, commuterEligible: true, commuterRoomBoard: 10700,
-    autoMerit: [
+// Merit aid scholarship thresholds — these are school-published, not user-configured
+// Auto-applied if student meets the GPA/SAT criteria
+const MERIT_OVERLAYS = {
+  185590: { autoMerit: [
       { name: 'Presidential Scholarship (entry)', minGPA: 3.4, minSAT: 0, amount: 2000 },
       { name: 'Presidential Scholarship (mid)', minGPA: 3.6, minSAT: 1200, amount: 3500 },
       { name: 'Presidential Scholarship (top)', minGPA: 3.7, minSAT: 1300, amount: 5000 }] },
@@ -25,10 +26,6 @@ const OVERLAYS = {
       { name: 'Scarlet Scholarship', minGPA: 3.6, minSAT: 1300, amount: 3000 },
       { name: "Dean's Scholarship", minGPA: 3.7, minSAT: 1350, amount: 6000 },
       { name: 'Presidential Scholarship', minGPA: 3.9, minSAT: 1450, amount: 12000 }] },
-  134130: { specialPrograms: ['fl-grandparent-waiver'], inStateTuition: 6381 },
-  134097: { specialPrograms: ['fl-grandparent-waiver'], inStateTuition: 5656 },
-  136172: { specialPrograms: ['fl-grandparent-waiver'], inStateTuition: 6118 },
-  132903: { specialPrograms: ['fl-grandparent-waiver'], inStateTuition: 6368 },
   100751: { autoMerit: [
       { name: 'Crimson Scholar', minGPA: 3.5, minSAT: 1230, amount: 18000 },
       { name: 'Capstone Scholar', minGPA: 3.5, minSAT: 1290, amount: 22000 },
@@ -50,6 +47,14 @@ const OVERLAYS = {
       { name: 'Carolina Scholar (basic)', minGPA: 3.5, minSAT: 1240, amount: 14000 },
       { name: 'Carolina Scholar (top)', minGPA: 3.8, minSAT: 1390, amount: 22000 }] }
 };
+
+// US state abbreviations for the home state dropdown
+const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC'];
+
+// Waiver types — apply to selected schools
+// 'percentage' — reduces tuition by X%
+// 'flatTuition' — replaces tuition with a fixed amount (e.g., FL Grandparent Waiver gives in-state rate)
+// 'flatAmount' — fixed dollar reduction applied per year
 
 const REGIONS = ['All', 'Mid-Atlantic', 'New England', 'Southeast', 'Midwest', 'Southwest', 'West'];
 
@@ -149,43 +154,62 @@ function calculateScenario({ schools, settings, scenarios529, student, schoolsLi
   return schools.map((cfg) => {
     const base = schoolsLib.find((s) => s.id === cfg.id);
     if (!base) return null;
-    const overlay = OVERLAYS[cfg.id] || {};
-    const school = { ...base, ...overlay };
-    const { useWaiver, useCommuter, useMerit = true, customMerit = 0 } = cfg;
+    const merit = MERIT_OVERLAYS[cfg.id] || {};
+    const school = { ...base, ...merit };
+    const { useCommuter, useMerit = true, customMerit = 0, enabledWaiverIds = [] } = cfg;
+
+    // Find applicable waivers — only those user enabled AND that apply to this school
+    const userWaivers = settings.waivers || [];
+    const applicableWaivers = userWaivers.filter(
+      (w) => enabledWaiverIds.includes(w.id) && (w.appliesToSchoolIds || []).includes(school.id)
+    );
 
     let runningBalance = totalBalance529AtStart;
     const years = [];
     let totalCOA = 0, total529Used = 0, totalParentPaid = 0, totalStudentPaid = 0, totalLoansUsed = 0, totalShortfall = 0, totalMerit = 0;
 
     let bestMerit = null;
-    if (useMerit && overlay.autoMerit) {
-      bestMerit = getBestScholarship(overlay, student.gpa, student.sat);
+    if (useMerit && merit.autoMerit) {
+      bestMerit = getBestScholarship(merit, student.gpa, student.sat);
     }
     const meritAmount = (bestMerit ? bestMerit.amount : 0) + customMerit;
 
     function getYearTuition(mult) {
-      let t;
-      if (useWaiver && school.specialPrograms?.includes('amy-msu-waiver')) {
-        t = school.tuitionIS * (1 - (school.waiverPct || 0.60));
-      } else if (useWaiver && school.specialPrograms?.includes('fl-grandparent-waiver')) {
-        t = school.inStateTuition || school.tuitionIS;
-      } else if (!school.isPublic || school.state === 'NJ') {
-        t = school.tuitionIS;
-      } else {
-        t = school.tuitionOOS;
+      // Determine base tuition based on home state
+      const isInState = settings.homeState && school.state === settings.homeState;
+      let baseTuition = (!school.isPublic || isInState) ? school.tuitionIS : school.tuitionOOS;
+
+      // Apply waivers (stacking: percentage applies first, then flat amounts subtract)
+      let tuition = baseTuition;
+      for (const w of applicableWaivers) {
+        if (w.type === 'percentage') {
+          tuition = tuition * (1 - (w.value || 0) / 100);
+        } else if (w.type === 'flatTuition') {
+          tuition = w.value || 0; // replaces tuition entirely
+        } else if (w.type === 'flatAmount') {
+          tuition = Math.max(0, tuition - (w.value || 0));
+        }
       }
-      return t * mult;
+      return tuition * mult;
+    }
+
+    function getYearTravel(mult) {
+      // Travel cost depends on distance from home state
+      const isInState = settings.homeState && school.state === settings.homeState;
+      const baseTravel = isInState ? 800 : 1500;
+      return baseTravel * mult;
     }
 
     for (let yr = 0; yr < 4; yr++) {
       const mult = Math.pow(1 + coaInflation / 100, yearsToStart + yr);
       const tuition = getYearTuition(mult);
       let roomBoard = school.roomBoardOn || 12000;
-      if (useCommuter && school.commuterEligible) roomBoard = school.commuterRoomBoard || 7500;
+      // Commuter mode reduces room/board to reflect living at home
+      if (useCommuter) roomBoard = 7500;
       const housingCost = roomBoard * mult;
       const books = (school.books || 1340) * mult;
       const personal = (school.otherOn || 2360) * mult;
-      const travel = (school.state === 'NJ' ? 800 : 1500) * mult;
+      const travel = getYearTravel(mult);
       const yrCOA = tuition + housingCost + books + personal + travel;
       const yrMerit = meritAmount * mult;
       const yrCOAAfter = Math.max(0, yrCOA - yrMerit);
@@ -238,25 +262,23 @@ export default function CollegePlanner() {
   const [libError, setLibError] = useState(null);
 
   const [settings, setSettings] = useState({
-    studentName: 'Ellie',
-    startYear: 2030, coaInflation: 5,
-    growth529Pre: 5, growth529During: 3,
-    parentAnnualContribution: 25000, studentAnnualContribution: 12000,
-    federalLoansUsed: false
+    studentName: '',
+    homeState: '',
+    startYear: 2030,
+    coaInflation: 5,
+    growth529Pre: 5,
+    growth529During: 3,
+    parentAnnualContribution: 0,
+    studentAnnualContribution: 0,
+    federalLoansUsed: false,
+    waivers: []
   });
 
   const [student, setStudent] = useState({ gpa: 3.5, sat: 1200 });
 
-  const [scenarios529, setScenarios529] = useState([
-    { id: '1', label: 'Parent 529 (Ben & Amy)', balance: 16921, monthlyContrib: 0 },
-    { id: '2', label: "Grandparent 529 (Amy's parents)", balance: 85700, monthlyContrib: 0 }
-  ]);
+  const [scenarios529, setScenarios529] = useState([]);
 
-  const [selectedSchools, setSelectedSchools] = useState([
-    { id: 185590, useWaiver: true, useCommuter: false, useMerit: true, customMerit: 0 },
-    { id: 186380, useWaiver: false, useCommuter: false, useMerit: true, customMerit: 0 },
-    { id: 134130, useWaiver: false, useCommuter: false, useMerit: true, customMerit: 0 }
-  ]);
+  const [selectedSchools, setSelectedSchools] = useState([]);
 
   const [savedScenarios, setSavedScenarios] = useState([]);
   const [activeTab, setActiveTab] = useState('compare');
@@ -315,7 +337,7 @@ export default function CollegePlanner() {
     if (filterState && s.state !== filterState.toUpperCase()) return false;
     if (filterPublic && !s.isPublic) return false;
     if (filterMerit) {
-      const overlay = OVERLAYS[s.id];
+      const overlay = MERIT_OVERLAYS[s.id];
       if (!overlay) return false;
       if (getMatchingScholarships(overlay, student.gpa, student.sat).length === 0) return false;
     }
@@ -331,7 +353,7 @@ export default function CollegePlanner() {
   }
 
   function getNetCostEstimate(s) {
-    const overlay = OVERLAYS[s.id];
+    const overlay = MERIT_OVERLAYS[s.id];
     const tuition = (!s.isPublic || s.state === 'NJ') ? s.tuitionIS : s.tuitionOOS;
     const sticker = tuition + (s.roomBoardOn || 12000) + (s.books || 1340) + (s.otherOn || 2360);
     const best = overlay ? getBestScholarship(overlay, student.gpa, student.sat) : null;
@@ -351,8 +373,8 @@ export default function CollegePlanner() {
       all = [...all].sort((a, b) => (b.admitRate ?? 0) - (a.admitRate ?? 0));
     } else if (sortBy === 'bestMerit') {
       all = [...all].sort((a, b) => {
-        const aMerit = OVERLAYS[a.id] ? (getBestScholarship(OVERLAYS[a.id], student.gpa, student.sat)?.amount || 0) : 0;
-        const bMerit = OVERLAYS[b.id] ? (getBestScholarship(OVERLAYS[b.id], student.gpa, student.sat)?.amount || 0) : 0;
+        const aMerit = MERIT_OVERLAYS[a.id] ? (getBestScholarship(MERIT_OVERLAYS[a.id], student.gpa, student.sat)?.amount || 0) : 0;
+        const bMerit = MERIT_OVERLAYS[b.id] ? (getBestScholarship(MERIT_OVERLAYS[b.id], student.gpa, student.sat)?.amount || 0) : 0;
         return bMerit - aMerit;
       });
     }
@@ -362,7 +384,11 @@ export default function CollegePlanner() {
 
   function addSchool(id) {
     if (selectedSchools.find((s) => s.id === id)) return;
-    setSelectedSchools([...selectedSchools, { id, useWaiver: false, useCommuter: false, useMerit: true, customMerit: 0 }]);
+    // Auto-enable any waivers that apply to this school
+    const applicableWaiverIds = (settings.waivers || [])
+      .filter((w) => (w.appliesToSchoolIds || []).includes(id))
+      .map((w) => w.id);
+    setSelectedSchools([...selectedSchools, { id, useCommuter: false, useMerit: true, customMerit: 0, enabledWaiverIds: applicableWaiverIds }]);
     setActiveTab('compare');
   }
 
@@ -403,7 +429,7 @@ export default function CollegePlanner() {
           <div>
             <h1 className="font-display text-3xl font-semibold tracking-tight">Tuition Lens</h1>
             <p className="text-emerald-100 text-sm mt-1">
-              {settings.studentName} · GPA {student.gpa.toFixed(1)} · SAT {student.sat} · Start {settings.startYear}
+              {settings.studentName ? `${settings.studentName} · ` : ''}GPA {student.gpa.toFixed(1)} · SAT {student.sat} · Start {settings.startYear}
               {libLoading ? ' · Loading data...' : libError ? ' · Sample data' : ` · ${schoolsLib.length.toLocaleString()} schools`}
             </p>
           </div>
@@ -446,14 +472,44 @@ export default function CollegePlanner() {
             <div className="grid gap-4 mb-6">
               {results.map((r) => (
                 <SchoolResultCard key={r.id} result={r} onRemove={() => removeSchool(r.id)}
-                  onUpdateConfig={(k, v) => updateSchoolConfig(r.id, k, v)} />
+                  onUpdateConfig={(k, v) => updateSchoolConfig(r.id, k, v)} settings={settings} />
               ))}
             </div>
             {results.length === 0 && (
-              <div className="bg-white border border-stone-200 rounded-lg p-8 text-center">
-                <p className="text-stone-500">No schools selected.</p>
-                <button onClick={() => setActiveTab('search')}
-                  className="mt-3 px-4 py-2 bg-emerald-700 text-white text-sm rounded">Find schools</button>
+              <div className="bg-white border border-stone-200 rounded-lg p-8">
+                <div className="text-center mb-6">
+                  <h3 className="font-display text-xl font-medium text-stone-900 mb-2">Welcome to Tuition Lens</h3>
+                  <p className="text-stone-600 text-sm max-w-md mx-auto">
+                    Compare 4-year cost projections for any US college, model 529 drawdowns, and see what your family will actually pay.
+                  </p>
+                </div>
+                <div className="max-w-md mx-auto space-y-3">
+                  <div className="flex items-start gap-3 p-3 border border-stone-200 rounded-lg">
+                    <div className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-xs font-medium flex-shrink-0">1</div>
+                    <div className="flex-1">
+                      <div className="text-sm font-medium text-stone-800">Set up your family</div>
+                      <div className="text-xs text-stone-500 mt-0.5">Add student profile, home state, 529 balances, and any special situations like employer tuition waivers.</div>
+                      <button onClick={() => setActiveTab('settings')}
+                        className="mt-2 text-xs font-medium text-emerald-700 hover:text-emerald-900">Go to settings →</button>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3 p-3 border border-stone-200 rounded-lg">
+                    <div className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-xs font-medium flex-shrink-0">2</div>
+                    <div className="flex-1">
+                      <div className="text-sm font-medium text-stone-800">Find schools to compare</div>
+                      <div className="text-xs text-stone-500 mt-0.5">Search {schoolsLib.length.toLocaleString()} US colleges with real IPEDS cost and admissions data.</div>
+                      <button onClick={() => setActiveTab('search')}
+                        className="mt-2 text-xs font-medium text-emerald-700 hover:text-emerald-900">Browse schools →</button>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3 p-3 border border-stone-200 rounded-lg">
+                    <div className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-xs font-medium flex-shrink-0">3</div>
+                    <div className="flex-1">
+                      <div className="text-sm font-medium text-stone-800">Compare and save scenarios</div>
+                      <div className="text-xs text-stone-500 mt-0.5">Toggle assumptions like commuter status or merit aid to see real-time cost differences.</div>
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
             {results.length > 0 && (
@@ -504,7 +560,7 @@ export default function CollegePlanner() {
             filterAdmit={filterAdmit} setFilterAdmit={setFilterAdmit}
             filterSATFit={filterSATFit} setFilterSATFit={setFilterSATFit}
             sortBy={sortBy} setSortBy={setSortBy}
-            student={student} onAdd={addSchool} />
+            student={student} settings={settings} onAdd={addSchool} />
         )}
 
         {activeTab === 'student' && (
@@ -525,7 +581,7 @@ export default function CollegePlanner() {
                 <div>GPA {student.gpa.toFixed(1)} ({student.gpa >= 3.8 ? 'top-tier' : student.gpa >= 3.5 ? 'strong' : student.gpa >= 3.3 ? 'solid' : 'developing'})</div>
                 <div>SAT {student.sat} ({student.sat >= 1400 ? '94th+ %ile' : student.sat >= 1300 ? '85th+ %ile' : student.sat >= 1200 ? '74th+ %ile' : 'developing'})</div>
                 <div className="pt-1 text-emerald-700 font-medium">
-                  Auto-merit matches: {Object.entries(OVERLAYS).filter(([id, o]) => getMatchingScholarships(o, student.gpa, student.sat).length > 0).length}
+                  Auto-merit matches: {Object.entries(MERIT_OVERLAYS).filter(([id, o]) => getMatchingScholarships(o, student.gpa, student.sat).length > 0).length}
                 </div>
               </div>
             </div>
@@ -538,9 +594,19 @@ export default function CollegePlanner() {
         {activeTab === 'settings' && (
           <div className="max-w-2xl space-y-6">
             <div className="bg-white border border-stone-200 rounded-lg p-6">
-              <h2 className="font-display text-2xl font-medium mb-4">Student & timing</h2>
+              <h2 className="font-display text-2xl font-medium mb-4">Family info</h2>
               <SettingField label="Student name" type="text" value={settings.studentName}
                 onChange={(v) => setSettings({ ...settings, studentName: v })} />
+              <div className="py-3 border-t border-stone-200">
+                <label className="block text-sm font-medium text-stone-700 mb-1">Home state</label>
+                <select value={settings.homeState}
+                  onChange={(e) => setSettings({ ...settings, homeState: e.target.value })}
+                  className="w-full px-3 py-2 border border-stone-200 rounded text-sm bg-white">
+                  <option value="">— Select state —</option>
+                  {US_STATES.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <p className="text-xs text-stone-500 mt-1">Determines in-state vs. out-of-state tuition. Public schools in this state will use in-state rates.</p>
+              </div>
               <SettingField label="College start year" type="number" value={settings.startYear}
                 onChange={(v) => setSettings({ ...settings, startYear: parseInt(v) || 2030 })}
                 note={`${Math.max(0, settings.startYear - 2026)} years from now`} />
@@ -616,7 +682,7 @@ export default function CollegePlanner() {
 
             <div className="bg-white border border-stone-200 rounded-lg p-6">
               <h2 className="font-display text-2xl font-medium mb-1">Annual contributions during college</h2>
-              <p className="text-sm text-stone-600 mb-4">How much you and Ellie will contribute each year toward college costs (separate from 529 drawdowns).</p>
+              <p className="text-sm text-stone-600 mb-4">How much you and your student will contribute each year toward college costs (separate from 529 drawdowns).</p>
               <SettingField label="Parent contribution per year" type="number" value={settings.parentAnnualContribution}
                 onChange={(v) => setSettings({ ...settings, parentAnnualContribution: parseInt(v) || 0 })}
                 prefix="$"
@@ -624,7 +690,7 @@ export default function CollegePlanner() {
               <SettingField label="Student contribution per year" type="number" value={settings.studentAnnualContribution}
                 onChange={(v) => setSettings({ ...settings, studentAnnualContribution: parseInt(v) || 0 })}
                 prefix="$"
-                note="What Ellie will contribute from work, savings, or external scholarships annually" />
+                note="What your student will contribute from work, savings, or external scholarships annually" />
             </div>
 
             <div className="bg-white border border-stone-200 rounded-lg p-6">
@@ -637,12 +703,46 @@ export default function CollegePlanner() {
             </div>
 
             <div className="bg-white border border-stone-200 rounded-lg p-6">
+              <div className="flex items-baseline justify-between mb-1">
+                <h2 className="font-display text-2xl font-medium">Special situations</h2>
+                <button onClick={() => {
+                  const newWaiver = {
+                    id: Date.now().toString(),
+                    label: 'New waiver',
+                    type: 'percentage',
+                    value: 50,
+                    appliesToSchoolIds: []
+                  };
+                  setSettings({ ...settings, waivers: [...(settings.waivers || []), newWaiver] });
+                }}
+                  className="px-3 py-1.5 bg-emerald-700 text-white text-sm font-medium rounded-md hover:bg-emerald-800">+ Add waiver</button>
+              </div>
+              <p className="text-sm text-stone-600 mb-4">
+                Tuition waivers, employer benefits, or state-specific programs that reduce tuition at specific schools. Examples: employer-provided tuition remission for employee's children, military benefits, state reciprocity agreements, the FL Grandparent Waiver.
+              </p>
+
+              {(!settings.waivers || settings.waivers.length === 0) ? (
+                <div className="text-center py-6 border border-dashed border-stone-300 rounded text-sm text-stone-500">
+                  No special waivers configured. Click "+ Add waiver" if you have one to apply.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {settings.waivers.map((w) => (
+                    <WaiverEditor key={w.id} waiver={w} schoolsLib={schoolsLib}
+                      onChange={(updated) => setSettings({ ...settings, waivers: settings.waivers.map((x) => x.id === w.id ? updated : x) })}
+                      onRemove={() => setSettings({ ...settings, waivers: settings.waivers.filter((x) => x.id !== w.id) })} />
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="bg-white border border-stone-200 rounded-lg p-6">
               <h2 className="font-display text-2xl font-medium mb-4">Federal student loans</h2>
               <div className="flex items-center justify-between">
                 <div className="flex-1 pr-4">
                   <div className="text-sm font-medium">Use federal student loans</div>
                   <div className="text-xs text-stone-500 mt-1">
-                    Fills cost gaps with Direct Unsubsidized Loans in Ellie's name: $5.5K (Yr 1) → $6.5K (Yr 2) → $7.5K (Yr 3-4). Max $27K total over 4 years. Current rate ~6.5%, no credit check or co-signer required, payments start 6 months after graduation.
+                    Fills cost gaps with Direct Unsubsidized Loans in the student's name: $5.5K (Yr 1) → $6.5K (Yr 2) → $7.5K (Yr 3-4). Max $27K total over 4 years. Current rate ~6.5%, no credit check or co-signer required, payments start 6 months after graduation.
                   </div>
                 </div>
                 <label className="inline-flex items-center cursor-pointer flex-shrink-0">
@@ -789,7 +889,7 @@ export default function CollegePlanner() {
 
 function SearchTab({ schoolsLib, filterStats, searchQuery, setSearchQuery, filterRegion, setFilterRegion,
   filterState, setFilterState, filterMerit, setFilterMerit, filterPublic, setFilterPublic, filterAdmit, setFilterAdmit,
-  filterSATFit, setFilterSATFit, sortBy, setSortBy, student, onAdd }) {
+  filterSATFit, setFilterSATFit, sortBy, setSortBy, student, settings, onAdd }) {
   return (
     <div>
       <h2 className="font-display text-2xl font-medium mb-2">Find schools</h2>
@@ -872,21 +972,23 @@ function SearchTab({ schoolsLib, filterStats, searchQuery, setSearchQuery, filte
 
       <div className="space-y-3">
         {filterStats.displayed.map((s) => (
-          <SchoolBrowseCard key={s.id} school={s} student={student} onAdd={() => onAdd(s.id)} />
+          <SchoolBrowseCard key={s.id} school={s} student={student} settings={settings} onAdd={() => onAdd(s.id)} />
         ))}
       </div>
     </div>
   );
 }
 
-function SchoolBrowseCard({ school, student, onAdd }) {
-  const overlay = OVERLAYS[school.id];
-  const matches = overlay ? getMatchingScholarships(overlay, student.gpa, student.sat) : [];
+function SchoolBrowseCard({ school, student, settings, onAdd }) {
+  const merit = MERIT_OVERLAYS[school.id];
+  const matches = merit ? getMatchingScholarships(merit, student.gpa, student.sat) : [];
   const best = matches.length ? matches.reduce((b, s) => s.amount > b.amount ? s : b) : null;
   const likelihood = getAdmitLikelihood(school, student.sat);
   const satFit = getSATFit(school, student.sat);
-  const tuition = (!school.isPublic || school.state === 'NJ') ? school.tuitionIS : school.tuitionOOS;
+  const isInState = settings.homeState && school.state === settings.homeState;
+  const tuition = (!school.isPublic || isInState) ? school.tuitionIS : school.tuitionOOS;
   const sticker = tuition + (school.roomBoardOn || 12000) + (school.books || 1340) + (school.otherOn || 2360);
+  const applicableWaivers = (settings.waivers || []).filter((w) => (w.appliesToSchoolIds || []).includes(school.id));
 
   return (
     <div className="bg-white border border-stone-200 rounded-lg p-4 hover:border-emerald-200 transition-colors flex items-start justify-between gap-3 flex-wrap">
@@ -909,7 +1011,7 @@ function SchoolBrowseCard({ school, student, onAdd }) {
             </span>
           )}
           <span>Sticker: {formatCurrencyShort(sticker)}/yr</span>
-          {school.isPublic && school.state !== 'NJ' && (
+          {school.isPublic && !isInState && (
             <span>IS: {formatCurrencyShort(school.tuitionIS)} · OOS: {formatCurrencyShort(school.tuitionOOS)}</span>
           )}
         </div>
@@ -919,16 +1021,11 @@ function SchoolBrowseCard({ school, student, onAdd }) {
             <span>{formatCurrency(best.amount)}/yr</span>
           </div>
         )}
-        {overlay?.specialPrograms?.includes('amy-msu-waiver') && (
-          <div className="mt-2 inline-flex bg-blue-50 border border-blue-200 text-blue-900 text-xs px-2.5 py-1 rounded-full font-medium">
-            Amy's MSU 60% waiver
+        {applicableWaivers.length > 0 && applicableWaivers.map((w) => (
+          <div key={w.id} className="mt-2 mr-2 inline-flex bg-blue-50 border border-blue-200 text-blue-900 text-xs px-2.5 py-1 rounded-full font-medium">
+            ✓ {w.label}
           </div>
-        )}
-        {overlay?.specialPrograms?.includes('fl-grandparent-waiver') && (
-          <div className="mt-2 inline-flex bg-purple-50 border border-purple-200 text-purple-900 text-xs px-2.5 py-1 rounded-full font-medium">
-            FL Grandparent Waiver eligible
-          </div>
-        )}
+        ))}
       </div>
       <button onClick={onAdd}
         className="px-3 py-1.5 bg-emerald-700 text-white text-sm rounded hover:bg-emerald-800 whitespace-nowrap">
@@ -950,10 +1047,19 @@ function AdmitBadge({ likelihood }) {
   return <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${c.bg} ${c.text}`}>{c.label}</span>;
 }
 
-function SchoolResultCard({ result, onRemove, onUpdateConfig }) {
+function SchoolResultCard({ result, onRemove, onUpdateConfig, settings }) {
   const [expanded, setExpanded] = useState(false);
   const config = result.schoolConfig;
-  const overlay = OVERLAYS[result.id];
+  const merit = MERIT_OVERLAYS[result.id];
+  const applicableWaivers = (settings.waivers || []).filter((w) => (w.appliesToSchoolIds || []).includes(result.id));
+
+  function toggleWaiver(waiverId) {
+    const current = config.enabledWaiverIds || [];
+    const next = current.includes(waiverId)
+      ? current.filter((id) => id !== waiverId)
+      : [...current, waiverId];
+    onUpdateConfig('enabledWaiverIds', next);
+  }
 
   return (
     <div className="bg-white border border-stone-200 rounded-lg overflow-hidden">
@@ -975,19 +1081,14 @@ function SchoolResultCard({ result, onRemove, onUpdateConfig }) {
             </div>
           )}
           <div className="flex gap-2 mt-3 flex-wrap">
-            {overlay?.specialPrograms?.includes('amy-msu-waiver') && (
-              <ChipToggle label="Amy's MSU waiver (60%)" active={config.useWaiver}
-                onClick={() => onUpdateConfig('useWaiver', !config.useWaiver)} />
-            )}
-            {overlay?.specialPrograms?.includes('fl-grandparent-waiver') && (
-              <ChipToggle label="FL Grandparent Waiver" active={config.useWaiver}
-                onClick={() => onUpdateConfig('useWaiver', !config.useWaiver)} />
-            )}
-            {overlay?.commuterEligible && (
-              <ChipToggle label="Commuter" active={config.useCommuter}
-                onClick={() => onUpdateConfig('useCommuter', !config.useCommuter)} />
-            )}
-            {overlay?.autoMerit?.length > 0 && (
+            {applicableWaivers.map((w) => (
+              <ChipToggle key={w.id} label={w.label}
+                active={(config.enabledWaiverIds || []).includes(w.id)}
+                onClick={() => toggleWaiver(w.id)} />
+            ))}
+            <ChipToggle label="Commuter (live at home)" active={config.useCommuter}
+              onClick={() => onUpdateConfig('useCommuter', !config.useCommuter)} />
+            {merit?.autoMerit?.length > 0 && (
               <ChipToggle label="Auto-merit" active={config.useMerit !== false}
                 onClick={() => onUpdateConfig('useMerit', !(config.useMerit !== false))} />
             )}
@@ -1073,6 +1174,115 @@ function PaymentStack({ totals }) {
             <span className="text-stone-600">{s.label}: {formatCurrencyShort(s.value)}</span>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function WaiverEditor({ waiver, schoolsLib, onChange, onRemove }) {
+  const [schoolPickerOpen, setSchoolPickerOpen] = useState(false);
+  const [schoolSearch, setSchoolSearch] = useState('');
+
+  const appliedSchools = (waiver.appliesToSchoolIds || [])
+    .map((id) => schoolsLib.find((s) => s.id === id))
+    .filter(Boolean);
+
+  const searchResults = useMemo(() => {
+    if (!schoolSearch || schoolSearch.length < 2) return [];
+    const q = schoolSearch.toLowerCase();
+    return schoolsLib
+      .filter((s) => s.name.toLowerCase().includes(q) || (s.state || '').toLowerCase().includes(q))
+      .filter((s) => !(waiver.appliesToSchoolIds || []).includes(s.id))
+      .slice(0, 8);
+  }, [schoolSearch, schoolsLib, waiver.appliesToSchoolIds]);
+
+  function addSchoolToWaiver(id) {
+    onChange({ ...waiver, appliesToSchoolIds: [...(waiver.appliesToSchoolIds || []), id] });
+    setSchoolSearch('');
+  }
+
+  function removeSchoolFromWaiver(id) {
+    onChange({ ...waiver, appliesToSchoolIds: (waiver.appliesToSchoolIds || []).filter((x) => x !== id) });
+  }
+
+  const typeOptions = [
+    { value: 'percentage', label: 'Percentage off tuition', helper: 'e.g., 60% off tuition' },
+    { value: 'flatTuition', label: 'Replace tuition with fixed amount', helper: 'e.g., charge $5,000 instead of normal tuition' },
+    { value: 'flatAmount', label: 'Fixed dollar amount off', helper: 'e.g., subtract $10,000 from tuition' }
+  ];
+
+  return (
+    <div className="border border-stone-200 rounded-lg p-4 bg-stone-50">
+      <div className="flex justify-between items-start gap-2 mb-3">
+        <input type="text" value={waiver.label}
+          onChange={(e) => onChange({ ...waiver, label: e.target.value })}
+          className="flex-1 px-3 py-2 border border-stone-200 rounded text-sm font-medium bg-white"
+          placeholder="Waiver name (e.g., Employee tuition remission)" />
+        <button onClick={onRemove}
+          className="text-stone-400 hover:text-red-600 text-xl leading-none px-2">×</button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+        <div>
+          <label className="block text-xs text-stone-500 mb-1">Waiver type</label>
+          <select value={waiver.type}
+            onChange={(e) => onChange({ ...waiver, type: e.target.value })}
+            className="w-full px-3 py-2 border border-stone-200 rounded text-sm bg-white">
+            {typeOptions.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </select>
+          <p className="text-xs text-stone-500 mt-1">{typeOptions.find((t) => t.value === waiver.type)?.helper}</p>
+        </div>
+        <div>
+          <label className="block text-xs text-stone-500 mb-1">
+            {waiver.type === 'percentage' ? 'Percent off' : 'Dollar amount'}
+          </label>
+          <div className="relative">
+            {waiver.type !== 'percentage' && (
+              <span className="absolute left-3 top-2 text-stone-400 text-sm pointer-events-none">$</span>
+            )}
+            <CurrencyInput
+              value={waiver.value || 0}
+              onChange={(v) => onChange({ ...waiver, value: v })}
+              className={`w-full ${waiver.type !== 'percentage' ? 'pl-7 pr-3' : 'px-3'} py-2 border border-stone-200 rounded text-sm bg-white`}
+            />
+            {waiver.type === 'percentage' && (
+              <span className="absolute right-3 top-2 text-stone-400 text-sm pointer-events-none">%</span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-xs text-stone-500 mb-1">Applies to schools</label>
+        {appliedSchools.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-2">
+            {appliedSchools.map((s) => (
+              <div key={s.id} className="inline-flex items-center gap-1.5 bg-white border border-stone-300 text-stone-700 text-xs px-2.5 py-1 rounded-full">
+                <span>{s.name} ({s.state})</span>
+                <button onClick={() => removeSchoolFromWaiver(s.id)}
+                  className="text-stone-400 hover:text-red-600 leading-none">×</button>
+              </div>
+            ))}
+          </div>
+        )}
+        <input type="text" value={schoolSearch}
+          onChange={(e) => setSchoolSearch(e.target.value)}
+          placeholder="Type school name to add..."
+          className="w-full px-3 py-2 border border-stone-200 rounded text-sm bg-white" />
+        {searchResults.length > 0 && (
+          <div className="mt-1 border border-stone-200 rounded bg-white max-h-48 overflow-y-auto">
+            {searchResults.map((s) => (
+              <button key={s.id} onClick={() => addSchoolToWaiver(s.id)}
+                className="w-full text-left px-3 py-2 text-sm hover:bg-stone-50 border-b border-stone-100 last:border-b-0">
+                <div className="font-medium">{s.name}</div>
+                <div className="text-xs text-stone-500">{s.city ? s.city + ', ' : ''}{s.state}</div>
+              </button>
+            ))}
+          </div>
+        )}
+        {schoolSearch.length >= 2 && searchResults.length === 0 && (
+          <p className="text-xs text-stone-500 mt-1">No matching schools found.</p>
+        )}
       </div>
     </div>
   );
