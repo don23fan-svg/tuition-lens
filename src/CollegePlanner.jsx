@@ -256,7 +256,7 @@ function calculateScenario({ schools, settings, scenarios529, student, schoolsLi
   }).filter(Boolean);
 }
 
-export default function CollegePlanner() {
+export default function CollegePlanner({ accountSlot = null }) {
   const [schoolsLib, setSchoolsLib] = useState(FALLBACK_SCHOOLS);
   const [libLoading, setLibLoading] = useState(true);
   const [libError, setLibError] = useState(null);
@@ -433,9 +433,12 @@ export default function CollegePlanner() {
               {libLoading ? ' · Loading data...' : libError ? ' · Sample data' : ` · ${schoolsLib.length.toLocaleString()} schools`}
             </p>
           </div>
-          <div className="text-right text-sm">
-            <div className="text-emerald-100">529 funds</div>
-            <div className="text-white font-medium">{formatCurrency(total529)} → {formatCurrency(total529AtCollege)}</div>
+          <div className="flex items-center gap-4">
+            <div className="text-right text-sm">
+              <div className="text-emerald-100">529 funds</div>
+              <div className="text-white font-medium">{formatCurrency(total529)} → {formatCurrency(total529AtCollege)}</div>
+            </div>
+            {accountSlot}
           </div>
         </div>
       </div>

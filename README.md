@@ -1,6 +1,6 @@
 # Tuition Lens — Deployment Guide
 
-A college cost scenario-planning app for high-income families.
+A college cost scenario-planning app for families.
 
 ## Live Demo
 
@@ -10,95 +10,116 @@ Once deployed, it'll be at: **https://don23fan-svg.github.io/tuition-lens**
 
 ---
 
-## Deploying to GitHub Pages (no coding required)
+## Two deployment levels
+
+**Level 1 — Anonymous only (5 minutes, no backend):**
+Deploy as-is. Everyone can use the app; each person's data is saved in their own
+browser. No accounts, no login. Good for sharing with a handful of people.
+
+**Level 2 — With user accounts (adds ~15 min, free backend):**
+Set up Supabase (see `SUPABASE_SETUP.md`). Users can still try the app anonymously,
+but can also create an account to save scenarios that sync across their devices.
+Each account's data is private and isolated.
+
+You can start with Level 1 and add Level 2 later — they're independent.
+
+---
+
+## Level 1 — Deploy to GitHub Pages (no coding required)
 
 ### Step 1 — Create the GitHub repository
 
 1. Go to https://github.com/new
 2. Repository name: `tuition-lens` (exactly this — must match the project config)
 3. Visibility: **Public** (required for free GitHub Pages)
-4. Don't check any of the initialization boxes (no README, no .gitignore)
+4. Don't check any initialization boxes
 5. Click **Create repository**
 
 ### Step 2 — Upload the project files
 
-1. On your new empty repo page, click the **"uploading an existing file"** link
-2. Drag the entire contents of the unzipped `tuition-lens` folder into the upload area
-   - **Important:** Drag the *contents* of the folder, not the folder itself. You should see files like `package.json`, `index.html`, `vite.config.js`, plus `src/`, `public/`, and `.github/` folders at the root of your repo.
-3. Scroll down and type a commit message like "Initial upload"
-4. Click **Commit changes**
+1. On your new empty repo page, click **"uploading an existing file"**
+2. Drag the *contents* of the unzipped `tuition-lens` folder into the upload area
+   (the files, not the folder itself — you should see `package.json`, `index.html`,
+   `src/`, `public/`, `.github/` at the repo root)
+3. Commit changes
 
 ### Step 3 — Enable GitHub Pages
 
-1. In your repo, click **Settings** (top nav)
-2. In the left sidebar, click **Pages**
-3. Under "Build and deployment":
-   - **Source:** GitHub Actions
-4. That's it — no other settings needed.
+1. Repo **Settings** → **Pages**
+2. **Source:** GitHub Actions
 
-### Step 4 — Wait for the deploy
+### Step 4 — Wait ~2 minutes
 
-1. Click the **Actions** tab in your repo
-2. You should see a workflow running called "Deploy to GitHub Pages"
-3. It takes about 2 minutes to complete (you'll see a green checkmark when done)
-4. Once green, your site is live at `https://YOUR-USERNAME.github.io/tuition-lens`
+The **Actions** tab shows the deploy running. Green checkmark = live at
+`https://YOUR-USERNAME.github.io/tuition-lens`
 
-### Step 5 — Share with family
+---
 
-Just send them the URL. Each person who opens it will see the default scenarios but can edit them — their changes save locally in their own browser only (so Amy's edits won't overwrite yours).
+## Level 2 — Add user accounts (optional)
+
+Follow `SUPABASE_SETUP.md`. The short version:
+1. Create a free Supabase project
+2. Run `supabase-schema.sql` in the Supabase SQL editor
+3. Paste your project URL + anon key into `src/supabaseConfig.js`
+4. Set the Site URL in Supabase auth settings to your GitHub Pages URL
+5. Commit — GitHub Actions redeploys automatically
+
+Until you do this, the app simply runs in anonymous-only mode (no login UI shown).
 
 ---
 
 ## Making future changes
 
 When you want to update the app:
+1. Edit the file on GitHub (or get an updated file from Claude and replace it)
+2. Commit
+3. GitHub Actions automatically rebuilds and redeploys within ~2 minutes
 
-**Option A: Use Claude again**
-1. Ask Claude to make the changes
-2. Download the updated `CollegePlanner.jsx` file
-3. In your GitHub repo, go to `src/CollegePlanner.jsx`
-4. Click the pencil (edit) icon
-5. Replace the content with the new file
-6. Commit
-7. GitHub Actions will automatically rebuild and redeploy within ~2 minutes
-
-**Option B: Edit directly on GitHub**
-Most settings are at the top of `src/CollegePlanner.jsx` — you can edit numbers like default 529 balances, the overlays object for new schools, etc., directly on GitHub's web UI.
+Most app logic is in `src/CollegePlanner.jsx`. Auth logic is in `src/Auth.jsx`
+and `src/storage.js`.
 
 ---
 
-## Project structure (what each file does)
+## Project structure
 
-- `src/CollegePlanner.jsx` — the entire app (1,100+ lines of React)
+- `src/CollegePlanner.jsx` — the main app (cost modeling, school comparison, settings)
+- `src/App.jsx` — wrapper handling auth state + storage routing
+- `src/Auth.jsx` — login/signup UI components
+- `src/storage.js` — storage abstraction (localStorage for anonymous, Supabase for logged-in)
+- `src/supabaseConfig.js` — your Supabase credentials (or placeholders for anonymous-only)
 - `public/schools_data.json` — IPEDS data for 1,569 colleges
-- `src/main.jsx` — entry point that bootstraps the app
-- `src/index.css` — Tailwind CSS setup
-- `index.html` — the HTML shell
-- `vite.config.js` — build config (base path is `/tuition-lens/`)
-- `tailwind.config.js` — Tailwind setup
-- `package.json` — npm dependencies
-- `.github/workflows/deploy.yml` — auto-deploy on every push to main
+- `src/main.jsx` — entry point
+- `index.html`, `vite.config.js`, `tailwind.config.js`, `package.json` — build config
+- `.github/workflows/deploy.yml` — auto-deploy on every push
+- `SUPABASE_SETUP.md` — account setup guide
+- `supabase-schema.sql` — database setup script
+
+---
+
+## How multi-user works
+
+- **Anonymous users:** data lives in their browser's localStorage. Two anonymous
+  users never see each other's data — they're on different browsers.
+- **Logged-in users:** data lives in Supabase, isolated per account by Row Level
+  Security (enforced by the database, not the app). A user logged in on their
+  phone and laptop sees the same data.
+- **Switching:** logging in swaps the storage backend; logging out swaps back.
+  New account holders with existing anonymous data get a one-time import offer.
 
 ---
 
 ## Troubleshooting
 
-**The site shows but the page is blank / 404:**
-- Check that the repo is named exactly `tuition-lens`
-- If you named it something else, edit `vite.config.js` and change `base: '/tuition-lens/'` to match your repo name
+**Site shows 404 / blank page:**
+- Repo must be named exactly `tuition-lens` (or edit `base` in `vite.config.js`)
 
-**The schools data doesn't load:**
+**Schools data doesn't load:**
 - Confirm `public/schools_data.json` is in the repo
-- The browser console will show fetch errors if the path is wrong
 
-**The Actions workflow fails:**
-- Click into the failed workflow run to see what went wrong
-- Most common: typos in `package.json` from manual edits
+**Login button doesn't appear:**
+- That's expected until you complete `SUPABASE_SETUP.md`. Anonymous mode works regardless.
 
----
+**Auth errors after Supabase setup:**
+- Check `src/supabaseConfig.js` values have no trailing spaces
+- Confirm the Site URL is set in Supabase (SUPABASE_SETUP.md Step 5)
 
-## Limitations to know about
-
-- **Privacy:** All data lives in each user's browser (localStorage). No server, no database, nothing sent anywhere.
-- **No login:** Anyone with the URL can use it. If you want to gate access, you'd need to add authentication (not currently included).
-- **Mobile works** but the school browse table is best viewed on desktop.
