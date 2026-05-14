@@ -274,7 +274,7 @@ export default function CollegePlanner({ accountSlot = null }) {
     waivers: []
   });
 
-  const [student, setStudent] = useState({ gpa: 3.5, sat: 1200 });
+  const [student, setStudent] = useState({ gpa: 3.5, sat: 1200, configured: false });
 
   const [scenarios529, setScenarios529] = useState([]);
 
@@ -303,7 +303,14 @@ export default function CollegePlanner({ accountSlot = null }) {
   useEffect(() => {
     async function load() {
       try { const s = await window.storage.get('settings_v3'); if (s?.value) setSettings(JSON.parse(s.value)); } catch {}
-      try { const s = await window.storage.get('student_v3'); if (s?.value) setStudent(JSON.parse(s.value)); } catch {}
+      try {
+        const s = await window.storage.get('student_v3');
+        if (s?.value) {
+          const loaded = JSON.parse(s.value);
+          // Any saved profile counts as configured — the user set it up before.
+          setStudent({ ...loaded, configured: true });
+        }
+      } catch {}
       try { const s = await window.storage.get('funds529_v3'); if (s?.value) setScenarios529(JSON.parse(s.value)); } catch {}
       try { const s = await window.storage.get('selectedSchools_v3'); if (s?.value) setSelectedSchools(JSON.parse(s.value)); } catch {}
       try { const s = await window.storage.get('savedScenarios_v3'); if (s?.value) setSavedScenarios(JSON.parse(s.value)); } catch {}
@@ -406,7 +413,7 @@ export default function CollegePlanner({ accountSlot = null }) {
 
   function loadScenario(s) {
     setSettings(s.settings);
-    if (s.student) setStudent(s.student);
+    if (s.student) setStudent({ ...s.student, configured: true });
     setScenarios529(s.scenarios529);
     setSelectedSchools(s.selectedSchools);
     setActiveTab('compare');
@@ -429,15 +436,26 @@ export default function CollegePlanner({ accountSlot = null }) {
           <div>
             <h1 className="font-display text-3xl font-semibold tracking-tight">Tuition Lens</h1>
             <p className="text-emerald-100 text-sm mt-1">
-              {settings.studentName ? `${settings.studentName} · ` : ''}GPA {student.gpa.toFixed(1)} · SAT {student.sat} · Start {settings.startYear}
+              {settings.studentName ? `${settings.studentName} · ` : ''}
+              {student.configured
+                ? `GPA ${student.gpa.toFixed(1)} · SAT ${student.sat} · Start ${settings.startYear}`
+                : 'Set up a profile to get started'}
               {libLoading ? ' · Loading data...' : libError ? ' · Sample data' : ` · ${schoolsLib.length.toLocaleString()} schools`}
             </p>
           </div>
           <div className="flex items-center gap-4">
-            <div className="text-right text-sm">
-              <div className="text-emerald-100">529 funds</div>
-              <div className="text-white font-medium">{formatCurrency(total529)} → {formatCurrency(total529AtCollege)}</div>
-            </div>
+            {scenarios529.length > 0 ? (
+              <div className="text-right text-sm">
+                <div className="text-emerald-100">529 funds</div>
+                <div className="text-white font-medium">{formatCurrency(total529)} → {formatCurrency(total529AtCollege)}</div>
+              </div>
+            ) : (
+              <button onClick={() => setActiveTab('funds')}
+                className="text-right text-sm text-emerald-100 hover:text-white transition-colors">
+                <div>529 funds</div>
+                <div className="font-medium underline decoration-emerald-300/50">Add a fund →</div>
+              </button>
+            )}
             {accountSlot}
           </div>
         </div>
@@ -572,11 +590,16 @@ export default function CollegePlanner({ accountSlot = null }) {
             <p className="text-sm text-stone-600 mb-6">
               GPA and SAT drive merit aid matching. Move the SAT slider and watch which schools open up.
             </p>
+            {!student.configured && (
+              <div className="mb-5 bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-900">
+                These are starting estimates — adjust the sliders below to match your student's actual numbers.
+              </div>
+            )}
             <SettingSlider label="Unweighted GPA" min={2.5} max={4.0} step={0.1}
-              value={student.gpa} onChange={(v) => setStudent({ ...student, gpa: v })}
+              value={student.gpa} onChange={(v) => setStudent({ ...student, gpa: v, configured: true })}
               format={(v) => v.toFixed(1)} />
             <SettingSlider label="SAT score" min={900} max={1600} step={10}
-              value={student.sat} onChange={(v) => setStudent({ ...student, sat: v })}
+              value={student.sat} onChange={(v) => setStudent({ ...student, sat: v, configured: true })}
               format={(v) => v.toString()} />
             <div className="mt-6 bg-emerald-50 border border-emerald-200 rounded-lg p-4">
               <div className="text-sm font-medium text-emerald-900 mb-2">Snapshot</div>

@@ -11,8 +11,8 @@
 // mode (no accounts, localStorage only) — which is a fine way to demo it.
 // ============================================================================
 
-export const SUPABASE_URL = 'https://njuoajzzgycyyuopuumr.supabase.co';
-export const SUPABASE_ANON_KEY = 'sb_publishable_w_CElcmWzY_3OK26b5nJgg_tutHxG8t';
+export const SUPABASE_URL = 'YOUR_SUPABASE_URL_HERE';
+export const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY_HERE';
 
 // Whether Supabase is actually configured. If not, the app stays in
 // anonymous-only mode and never shows login UI.
