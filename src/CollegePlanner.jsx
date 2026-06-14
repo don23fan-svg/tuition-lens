@@ -481,6 +481,17 @@ export default function CollegePlanner({ accountSlot = null }) {
       </div>
 
       <div className="max-w-7xl mx-auto px-6 py-8">
+        {/* Setup progress banner — visible across all tabs until user has
+            completed the basics. Dismissible once all steps are done. */}
+        <SetupBanner
+          settings={settings}
+          student={student}
+          scenarios529={scenarios529}
+          selectedSchools={selectedSchools}
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+        />
+
         {activeTab === 'compare' && (
           <>
             <div className="flex items-baseline justify-between mb-6 flex-wrap gap-3">
@@ -493,43 +504,21 @@ export default function CollegePlanner({ accountSlot = null }) {
             <div className="grid gap-4 mb-6">
               {results.map((r) => (
                 <SchoolResultCard key={r.id} result={r} onRemove={() => removeSchool(r.id)}
-                  onUpdateConfig={(k, v) => updateSchoolConfig(r.id, k, v)} settings={settings} />
+                  onUpdateConfig={(k, v) => updateSchoolConfig(r.id, k, v)} settings={settings}
+                  total529AtCollege={total529AtCollege} />
               ))}
             </div>
             {results.length === 0 && (
               <div className="bg-white border border-stone-200 rounded-lg p-8">
-                <div className="text-center mb-6">
+                <div className="text-center">
                   <h3 className="font-display text-xl font-medium text-stone-900 mb-2">Welcome to Tuition Lens</h3>
-                  <p className="text-stone-600 text-sm max-w-md mx-auto">
-                    Compare 4-year cost projections for any US college, model 529 drawdowns, and see what your family will actually pay.
+                  <p className="text-stone-600 text-sm max-w-md mx-auto mb-5">
+                    Compare 4-year cost projections for any US college, model 529 drawdowns, and see what your family will actually pay. Follow the setup banner above to get started.
                   </p>
-                </div>
-                <div className="max-w-md mx-auto space-y-3">
-                  <div className="flex items-start gap-3 p-3 border border-stone-200 rounded-lg">
-                    <div className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-xs font-medium flex-shrink-0">1</div>
-                    <div className="flex-1">
-                      <div className="text-sm font-medium text-stone-800">Set up your family</div>
-                      <div className="text-xs text-stone-500 mt-0.5">Add student profile, home state, 529 balances, and any special situations like employer tuition waivers.</div>
-                      <button onClick={() => setActiveTab('settings')}
-                        className="mt-2 text-xs font-medium text-emerald-700 hover:text-emerald-900">Go to settings →</button>
-                    </div>
-                  </div>
-                  <div className="flex items-start gap-3 p-3 border border-stone-200 rounded-lg">
-                    <div className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-xs font-medium flex-shrink-0">2</div>
-                    <div className="flex-1">
-                      <div className="text-sm font-medium text-stone-800">Find schools to compare</div>
-                      <div className="text-xs text-stone-500 mt-0.5">Search {schoolsLib.length.toLocaleString()} US colleges with real IPEDS cost and admissions data.</div>
-                      <button onClick={() => setActiveTab('search')}
-                        className="mt-2 text-xs font-medium text-emerald-700 hover:text-emerald-900">Browse schools →</button>
-                    </div>
-                  </div>
-                  <div className="flex items-start gap-3 p-3 border border-stone-200 rounded-lg">
-                    <div className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-xs font-medium flex-shrink-0">3</div>
-                    <div className="flex-1">
-                      <div className="text-sm font-medium text-stone-800">Compare and save scenarios</div>
-                      <div className="text-xs text-stone-500 mt-0.5">Toggle assumptions like commuter status or merit aid to see real-time cost differences.</div>
-                    </div>
-                  </div>
+                  <button onClick={() => setActiveTab('search')}
+                    className="px-4 py-2 bg-emerald-700 text-white text-sm font-medium rounded-md hover:bg-emerald-800">
+                    Browse schools →
+                  </button>
                 </div>
               </div>
             )}
@@ -614,6 +603,25 @@ export default function CollegePlanner({ accountSlot = null }) {
             <div className="mt-4 bg-stone-100 border border-stone-200 rounded-lg p-4 text-xs text-stone-600">
               <strong>Note:</strong> IPEDS provides cost and admit rate data for all 1,569 schools. Merit aid eligibility thresholds are manually curated for the subset of schools with well-documented automatic awards (Alabama, Mississippi, Arkansas, Kentucky, South Carolina, MSU, Rutgers, etc.).
             </div>
+            {/* Continue-setup footer — only shown when profile is configured AND setup isn't complete */}
+            {student.configured && (() => {
+              const nextNeeded = !settings.homeState ? { tab: 'settings', label: 'Set home state' }
+                : scenarios529.length === 0 ? { tab: 'funds', label: 'Add a 529 fund' }
+                : selectedSchools.length === 0 ? { tab: 'search', label: 'Find schools' }
+                : null;
+              if (!nextNeeded) return null;
+              return (
+                <div className="mt-4 bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center justify-between gap-3 flex-wrap">
+                  <div className="text-sm text-blue-900">
+                    <span className="font-medium">✓ Profile saved.</span> Your changes auto-save as you type.
+                  </div>
+                  <button onClick={() => setActiveTab(nextNeeded.tab)}
+                    className="px-3 py-1.5 bg-blue-700 text-white text-sm font-medium rounded-md hover:bg-blue-800 whitespace-nowrap">
+                    Next: {nextNeeded.label} →
+                  </button>
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -704,59 +712,6 @@ export default function CollegePlanner({ accountSlot = null }) {
                   </div>
                 </div>
               </div>
-
-              {/* Parallel cost summary — only shown when user has schools selected.
-                  Gives an apples-to-apples comparison: 529 funds vs school costs,
-                  in both today's dollars and inflated-to-start-year dollars. */}
-              {results.length > 0 && (() => {
-                // Use the lowest-cost selected school as the "what could you afford" anchor,
-                // since families are usually trying to find an affordable option, not average
-                // across reaches and safeties.
-                const sortedByCost = [...results].sort((a, b) => a.totals.coa - b.totals.coa);
-                const cheapest = sortedByCost[0];
-                const mostExpensive = sortedByCost[sortedByCost.length - 1];
-                const yearsToStart = Math.max(0, settings.startYear - 2025);
-                const avgInflMult = yearsToStart === 0 ? 1 :
-                  (Math.pow(1 + settings.coaInflation / 100, yearsToStart) +
-                   Math.pow(1 + settings.coaInflation / 100, yearsToStart + 1) +
-                   Math.pow(1 + settings.coaInflation / 100, yearsToStart + 2) +
-                   Math.pow(1 + settings.coaInflation / 100, yearsToStart + 3)) / 4;
-                const cheapestToday = cheapest.totals.coa / avgInflMult;
-                const mostExpensiveToday = mostExpensive.totals.coa / avgInflMult;
-                const gap = Math.max(0, cheapest.totals.coa - total529AtCollege);
-                return (
-                  <div className="mt-3 p-4 bg-amber-50 border border-amber-200 rounded-lg">
-                    <div className="text-xs uppercase tracking-wide text-amber-800 font-medium mb-2">
-                      Selected schools' 4-yr cost range
-                    </div>
-                    <div className="space-y-1.5 text-sm">
-                      <div className="flex justify-between">
-                        <span className="text-stone-700">In today's dollars</span>
-                        <span className="font-medium">
-                          {results.length === 1
-                            ? formatCurrency(cheapestToday)
-                            : `${formatCurrency(cheapestToday)} – ${formatCurrency(mostExpensiveToday)}`}
-                        </span>
-                      </div>
-                      <div className="flex justify-between pt-2 mt-2 border-t border-amber-200 text-base">
-                        <span className="font-medium text-amber-900">Projected at fall {settings.startYear}</span>
-                        <span className="font-semibold text-amber-900 font-display">
-                          {results.length === 1
-                            ? formatCurrency(cheapest.totals.coa)
-                            : `${formatCurrency(cheapest.totals.coa)} – ${formatCurrency(mostExpensive.totals.coa)}`}
-                        </span>
-                      </div>
-                      <div className="text-xs text-stone-500 pt-1">
-                        Cheapest option vs. projected 529: <span className="font-medium">
-                          {gap > 0
-                            ? `${formatCurrency(gap)} gap to cover with contributions, loans, or merit`
-                            : `${formatCurrency(total529AtCollege - cheapest.totals.coa)} surplus`}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
             </div>
 
             <div className="bg-white border border-stone-200 rounded-lg p-6">
@@ -843,7 +798,7 @@ export default function CollegePlanner({ accountSlot = null }) {
                 className="px-3 py-1.5 bg-emerald-700 text-white text-sm font-medium rounded-md hover:bg-emerald-800">+ Add fund</button>
             </div>
             <p className="text-sm text-stone-600 mb-6">
-              Set current balance + ongoing monthly contributions. The app projects to fall {settings.startYear} using your growth rate from Settings ({settings.growth529Pre}%/yr).
+              Set current balance + ongoing monthly contributions. The app projects to fall {settings.startYear} using your growth rate from Settings ({settings.growth529Pre}%/yr). <span className="text-stone-400 italic">Changes save automatically as you type.</span>
             </p>
             <div className="space-y-3">
               {scenarios529.map((fund) => {
@@ -923,6 +878,25 @@ export default function CollegePlanner({ accountSlot = null }) {
             <div className="mt-4 bg-stone-100 border border-stone-200 rounded-lg p-4 text-xs text-stone-600">
               <strong>Note on contributions:</strong> 529 plans have annual contribution limits tied to federal gift tax (~$19K/yr per parent per child in 2025), so up to ~$38K/yr from married parents without filing a gift tax return. Some states also offer state income tax deductions for contributions. NJ is one of the few states with NO state deduction — contributions are tax-deferred at the federal level only.
             </div>
+            {/* Continue-setup footer — only shown if user has added a fund AND setup isn't complete */}
+            {scenarios529.length > 0 && (() => {
+              const nextNeeded = !student.configured ? { tab: 'student', label: 'Set student profile' }
+                : !settings.homeState ? { tab: 'settings', label: 'Set home state' }
+                : selectedSchools.length === 0 ? { tab: 'search', label: 'Find schools' }
+                : null;
+              if (!nextNeeded) return null;
+              return (
+                <div className="mt-4 bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center justify-between gap-3 flex-wrap">
+                  <div className="text-sm text-blue-900">
+                    <span className="font-medium">✓ 529 fund saved.</span> Your changes auto-save as you type — no need to click save.
+                  </div>
+                  <button onClick={() => setActiveTab(nextNeeded.tab)}
+                    className="px-3 py-1.5 bg-blue-700 text-white text-sm font-medium rounded-md hover:bg-blue-800 whitespace-nowrap">
+                    Next: {nextNeeded.label} →
+                  </button>
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -1066,12 +1040,7 @@ function SchoolBrowseCard({ school, student, settings, onAdd }) {
   const satFit = getSATFit(school, student.sat);
   const isInState = settings.homeState && school.state === settings.homeState;
   const tuition = (!school.isPublic || isInState) ? school.tuitionIS : school.tuitionOOS;
-  const totalCOAToday = tuition + (school.roomBoardOn || 12000) + (school.books || 1340) + (school.otherOn || 2360);
-  // Project the SAME COA forward to the user's start year using their inflation setting,
-  // so the browse card and the Compare card use a consistent inflation basis.
-  const yearsToStart = Math.max(0, (settings.startYear || 2030) - 2025);
-  const inflFactor = Math.pow(1 + (settings.coaInflation || 5) / 100, yearsToStart);
-  const totalCOAAtStart = totalCOAToday * inflFactor;
+  const sticker = tuition + (school.roomBoardOn || 12000) + (school.books || 1340) + (school.otherOn || 2360);
   const applicableWaivers = (settings.waivers || []).filter((w) => (w.appliesToSchoolIds || []).includes(school.id));
 
   return (
@@ -1094,12 +1063,7 @@ function SchoolBrowseCard({ school, student, settings, onAdd }) {
               {satFit === 'below' && <span className="text-amber-600 font-medium"> ↓ below 25th</span>}
             </span>
           )}
-          <span>
-            COA today: <span className="font-medium text-stone-700">{formatCurrencyShort(totalCOAToday)}/yr</span>
-            {yearsToStart > 0 && (
-              <span className="text-stone-400"> → {formatCurrencyShort(totalCOAAtStart)}/yr at fall {settings.startYear}</span>
-            )}
-          </span>
+          <span>Sticker: {formatCurrencyShort(sticker)}/yr</span>
           {school.isPublic && !isInState && (
             <span>IS: {formatCurrencyShort(school.tuitionIS)} · OOS: {formatCurrencyShort(school.tuitionOOS)}</span>
           )}
@@ -1136,7 +1100,7 @@ function AdmitBadge({ likelihood }) {
   return <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${c.bg} ${c.text}`}>{c.label}</span>;
 }
 
-function SchoolResultCard({ result, onRemove, onUpdateConfig, settings }) {
+function SchoolResultCard({ result, onRemove, onUpdateConfig, settings, total529AtCollege }) {
   const [expanded, setExpanded] = useState(false);
   const config = result.schoolConfig;
   const merit = MERIT_OVERLAYS[result.id];
@@ -1188,21 +1152,43 @@ function SchoolResultCard({ result, onRemove, onUpdateConfig, settings }) {
           <div className="text-2xl font-display font-semibold">{formatCurrencyShort(result.totals.coa)}</div>
           <div className="text-xs text-stone-500">avg {formatCurrency(result.totals.coa / 4)}/yr</div>
           {(() => {
-            // Show the equivalent in today's dollars, so the inflation jump is transparent.
+            // "Today's dollars" equivalent — reverse-discount the future 4-yr total
+            // back to today's dollars so the inflation jump is transparent.
             const yearsToStart = Math.max(0, (settings.startYear || 2030) - 2025);
             const inflTotal = settings.coaInflation || 5;
-            // Reverse-discount the future 4-yr total back to today's dollars at the same rate.
-            // This is the "today's-dollars equivalent" of the projected number above.
-            const avgInflMult = yearsToStart === 0
-              ? 1
-              : (Math.pow(1 + inflTotal / 100, yearsToStart) +
-                 Math.pow(1 + inflTotal / 100, yearsToStart + 1) +
-                 Math.pow(1 + inflTotal / 100, yearsToStart + 2) +
-                 Math.pow(1 + inflTotal / 100, yearsToStart + 3)) / 4;
+            const avgInflMult = yearsToStart === 0 ? 1 :
+              (Math.pow(1 + inflTotal / 100, yearsToStart) +
+               Math.pow(1 + inflTotal / 100, yearsToStart + 1) +
+               Math.pow(1 + inflTotal / 100, yearsToStart + 2) +
+               Math.pow(1 + inflTotal / 100, yearsToStart + 3)) / 4;
             const todayEquivalent = result.totals.coa / avgInflMult;
             return yearsToStart > 0 && (
               <div className="text-xs text-stone-400 mt-1 italic">
                 ≈ {formatCurrencyShort(todayEquivalent)} in today's dollars
+              </div>
+            );
+          })()}
+          {/* Affordability delta — "total maximum available" framing:
+              full projected 529 balance + max parent contributions × 4 + max student
+              contributions × 4 + max federal loans + merit aid earned.
+              Compared against total cost. Shows surplus in green or gap in red. */}
+          {(() => {
+            const yearsCount = 4;
+            const max529 = total529AtCollege || 0;
+            const maxParent = (settings.parentAnnualContribution || 0) * yearsCount;
+            const maxStudent = (settings.studentAnnualContribution || 0) * yearsCount;
+            const maxLoans = settings.federalLoansUsed ? 27000 : 0; // 5.5 + 6.5 + 7.5 + 7.5
+            const meritEarned = result.totals.meritAid;
+            const totalAvail = max529 + maxParent + maxStudent + maxLoans + meritEarned;
+            const totalCost = result.totals.coa;
+            const delta = totalAvail - totalCost;
+            const isSurplus = delta >= 0;
+            return (
+              <div className={`mt-2 pt-2 border-t ${isSurplus ? 'border-emerald-200' : 'border-red-200'}`}>
+                <div className="text-xs text-stone-500">{isSurplus ? 'Surplus' : 'Gap'} vs total resources</div>
+                <div className={`text-lg font-display font-semibold ${isSurplus ? 'text-emerald-700' : 'text-red-600'}`}>
+                  {isSurplus ? '+' : '−'}{formatCurrencyShort(Math.abs(delta))}
+                </div>
               </div>
             );
           })()}
@@ -1390,6 +1376,95 @@ function WaiverEditor({ waiver, schoolsLib, onChange, onRemove }) {
         )}
         {schoolSearch.length >= 2 && searchResults.length === 0 && (
           <p className="text-xs text-stone-500 mt-1">No matching schools found.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SetupBanner({ settings, student, scenarios529, selectedSchools, activeTab, setActiveTab }) {
+  // Define the setup steps and whether each is complete
+  const steps = [
+    {
+      key: 'profile',
+      label: 'Set student profile',
+      done: student.configured,
+      tab: 'student',
+      tabLabel: 'Profile',
+    },
+    {
+      key: 'homeState',
+      label: 'Set home state',
+      done: !!settings.homeState,
+      tab: 'settings',
+      tabLabel: 'Settings',
+    },
+    {
+      key: 'fund',
+      label: 'Add a 529 fund',
+      done: scenarios529.length > 0,
+      tab: 'funds',
+      tabLabel: '529 Funds',
+    },
+    {
+      key: 'school',
+      label: 'Add at least one school',
+      done: selectedSchools.length > 0,
+      tab: 'search',
+      tabLabel: 'Find schools',
+    },
+  ];
+
+  const completed = steps.filter((s) => s.done).length;
+  const total = steps.length;
+  const allDone = completed === total;
+  const nextStep = steps.find((s) => !s.done);
+
+  // Once setup is complete, hide the banner entirely. It returns if user
+  // resets data, so it's not dismissible in a sticky way — completing it dismisses it.
+  if (allDone) return null;
+
+  return (
+    <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+      <div className="flex items-start gap-3 flex-wrap">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            <h3 className="font-medium text-blue-900">Setup progress</h3>
+            <span className="text-xs text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full font-medium">
+              {completed} of {total} complete
+            </span>
+          </div>
+          <p className="text-xs text-blue-800 mb-3">
+            {nextStep
+              ? `Next: ${nextStep.label}. Once setup is complete, this banner disappears.`
+              : 'All set up.'}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {steps.map((s) => (
+              <button
+                key={s.key}
+                onClick={() => setActiveTab(s.tab)}
+                className={`text-xs px-2.5 py-1 rounded-full border transition-colors flex items-center gap-1.5 ${
+                  s.done
+                    ? 'bg-emerald-100 border-emerald-300 text-emerald-900'
+                    : activeTab === s.tab
+                    ? 'bg-blue-700 border-blue-700 text-white'
+                    : 'bg-white border-blue-300 text-blue-800 hover:bg-blue-100'
+                }`}
+              >
+                <span>{s.done ? '✓' : '○'}</span>
+                <span>{s.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+        {nextStep && activeTab !== nextStep.tab && (
+          <button
+            onClick={() => setActiveTab(nextStep.tab)}
+            className="px-3 py-1.5 bg-blue-700 text-white text-sm font-medium rounded-md hover:bg-blue-800 whitespace-nowrap"
+          >
+            Go to {nextStep.tabLabel} →
+          </button>
         )}
       </div>
     </div>
