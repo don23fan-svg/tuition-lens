@@ -292,6 +292,9 @@ export default function CollegePlanner({ accountSlot = null }) {
   const [filterAdmit, setFilterAdmit] = useState('All');
   const [filterSATFit, setFilterSATFit] = useState('All'); // All, Above, Within, Below
   const [sortBy, setSortBy] = useState('default'); // default, cheapest, mostSelective, leastSelective, bestMerit
+  // Comparison table display toggles
+  const [tableDollarView, setTableDollarView] = useState('startYear'); // 'startYear' or 'today'
+  const [tableShowYearly, setTableShowYearly] = useState(false); // expand to per-year rows
 
   useEffect(() => {
     fetch('schools_data.json')
@@ -523,39 +526,17 @@ export default function CollegePlanner({ accountSlot = null }) {
               </div>
             )}
             {results.length > 0 && (
-              <div className="mt-8 bg-white border border-stone-200 rounded-lg p-6 overflow-x-auto">
-                <h3 className="font-display text-xl font-medium mb-4">Total out-of-pocket</h3>
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-stone-200">
-                      <th className="text-left py-2 font-medium text-stone-600">School</th>
-                      <th className="text-right py-2 font-medium text-stone-600">4-yr COA</th>
-                      <th className="text-right py-2 font-medium text-stone-600">Merit</th>
-                      <th className="text-right py-2 font-medium text-stone-600">529</th>
-                      <th className="text-right py-2 font-medium text-stone-600">You pay</th>
-                      <th className="text-right py-2 font-medium text-stone-600">Student</th>
-                      <th className="text-right py-2 font-medium text-stone-600">Loans</th>
-                      <th className="text-right py-2 font-medium text-stone-600">Gap</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {results.map((r) => (
-                      <tr key={r.id} className="school-row border-b border-stone-100">
-                        <td className="py-3 font-medium">{r.name}</td>
-                        <td className="text-right py-3">{formatCurrencyShort(r.totals.coa)}</td>
-                        <td className="text-right py-3 text-emerald-700">{r.totals.meritAid > 0 ? '−' + formatCurrencyShort(r.totals.meritAid) : '—'}</td>
-                        <td className="text-right py-3 text-emerald-700">{formatCurrencyShort(r.totals.from529)}</td>
-                        <td className="text-right py-3">{formatCurrencyShort(r.totals.fromParent)}</td>
-                        <td className="text-right py-3">{formatCurrencyShort(r.totals.fromStudent)}</td>
-                        <td className="text-right py-3">{r.totals.fromLoans > 0 ? formatCurrencyShort(r.totals.fromLoans) : '—'}</td>
-                        <td className={`text-right py-3 font-medium ${r.totals.shortfall > 0.5 ? 'text-red-600' : 'text-stone-400'}`}>
-                          {r.totals.shortfall > 0.5 ? formatCurrencyShort(r.totals.shortfall) : '—'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <ComparisonSummary results={results} settings={settings} total529AtCollege={total529AtCollege} />
+            )}
+            {results.length > 0 && (
+              <EnhancedComparisonTable
+                results={results}
+                settings={settings}
+                tableDollarView={tableDollarView}
+                setTableDollarView={setTableDollarView}
+                tableShowYearly={tableShowYearly}
+                setTableShowYearly={setTableShowYearly}
+              />
             )}
           </>
         )}
@@ -935,6 +916,306 @@ export default function CollegePlanner({ accountSlot = null }) {
           Cost and admissions data: IPEDS 2024-25 Provisional Release (NCES). Merit thresholds curated from each school's published programs.
           Verify all numbers directly with each school before making decisions.
         </p>
+      </div>
+    </div>
+  );
+}
+
+function ComparisonSummary({ results, settings, total529AtCollege }) {
+  // Compute the "total maximum available" used by the per-card affordability deltas.
+  // Same formula, so the summary and the card numbers are consistent.
+  const yearsCount = 4;
+  const maxParent = (settings.parentAnnualContribution || 0) * yearsCount;
+  const maxStudent = (settings.studentAnnualContribution || 0) * yearsCount;
+  const maxLoans = settings.federalLoansUsed ? 27000 : 0;
+
+  // Compute delta per school: positive = surplus, negative = gap
+  const enriched = results.map((r) => {
+    const totalAvail = (total529AtCollege || 0) + maxParent + maxStudent + maxLoans + r.totals.meritAid;
+    const delta = totalAvail - r.totals.coa;
+    return { ...r, delta };
+  });
+
+  const cheapest = enriched.reduce((acc, r) => r.totals.coa < acc.totals.coa ? r : acc, enriched[0]);
+  const mostExpensive = enriched.reduce((acc, r) => r.totals.coa > acc.totals.coa ? r : acc, enriched[0]);
+  const bestSurplus = enriched.reduce((acc, r) => r.delta > acc.delta ? r : acc, enriched[0]);
+  const worstGap = enriched.reduce((acc, r) => r.delta < acc.delta ? r : acc, enriched[0]);
+  const range = mostExpensive.totals.coa - cheapest.totals.coa;
+
+  // Only show "spread" stats when there are 2+ schools
+  const multipleSchools = results.length > 1;
+
+  return (
+    <div className="bg-white border border-stone-200 rounded-lg p-5 mb-6">
+      <div className="flex items-baseline justify-between flex-wrap gap-2 mb-4">
+        <h3 className="font-display text-lg font-medium">At a glance</h3>
+        <span className="text-xs text-stone-500">
+          {results.length} school{results.length === 1 ? '' : 's'} · projected costs at fall {settings.startYear}
+        </span>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <SummaryStat
+          label="Cheapest"
+          value={formatCurrencyShort(cheapest.totals.coa)}
+          sublabel={cheapest.name}
+          tone="emerald"
+        />
+        {multipleSchools && (
+          <SummaryStat
+            label="Most expensive"
+            value={formatCurrencyShort(mostExpensive.totals.coa)}
+            sublabel={mostExpensive.name}
+            tone="stone"
+          />
+        )}
+        {multipleSchools && (
+          <SummaryStat
+            label="Range"
+            value={formatCurrencyShort(range)}
+            sublabel="spread between options"
+            tone="stone"
+          />
+        )}
+        <SummaryStat
+          label={bestSurplus.delta >= 0 ? 'Best surplus' : 'Smallest gap'}
+          value={`${bestSurplus.delta >= 0 ? '+' : '−'}${formatCurrencyShort(Math.abs(bestSurplus.delta))}`}
+          sublabel={bestSurplus.name}
+          tone={bestSurplus.delta >= 0 ? 'emerald' : 'amber'}
+        />
+        {multipleSchools && worstGap.delta < 0 && worstGap.id !== bestSurplus.id && (
+          <SummaryStat
+            label="Largest gap"
+            value={`−${formatCurrencyShort(Math.abs(worstGap.delta))}`}
+            sublabel={worstGap.name}
+            tone="red"
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SummaryStat({ label, value, sublabel, tone }) {
+  const toneClasses = {
+    emerald: 'border-emerald-200 bg-emerald-50',
+    red: 'border-red-200 bg-red-50',
+    amber: 'border-amber-200 bg-amber-50',
+    stone: 'border-stone-200 bg-stone-50',
+  };
+  const valueColor = {
+    emerald: 'text-emerald-800',
+    red: 'text-red-700',
+    amber: 'text-amber-800',
+    stone: 'text-stone-800',
+  };
+  return (
+    <div className={`border rounded-lg p-3 ${toneClasses[tone]}`}>
+      <div className="text-xs uppercase tracking-wide text-stone-600 font-medium">{label}</div>
+      <div className={`font-display text-xl font-semibold mt-1 ${valueColor[tone]}`}>{value}</div>
+      <div className="text-xs text-stone-500 mt-0.5 truncate" title={sublabel}>{sublabel}</div>
+    </div>
+  );
+}
+
+function EnhancedComparisonTable({ results, settings, tableDollarView, setTableDollarView, tableShowYearly, setTableShowYearly }) {
+  // Helper to convert a future-dollars value to today's dollars equivalent.
+  // Same average-multiplier approach used elsewhere in the app.
+  const yearsToStart = Math.max(0, (settings.startYear || 2030) - 2025);
+  const inflTotal = settings.coaInflation || 5;
+  const avgInflMult = yearsToStart === 0 ? 1 :
+    (Math.pow(1 + inflTotal / 100, yearsToStart) +
+     Math.pow(1 + inflTotal / 100, yearsToStart + 1) +
+     Math.pow(1 + inflTotal / 100, yearsToStart + 2) +
+     Math.pow(1 + inflTotal / 100, yearsToStart + 3)) / 4;
+
+  // For per-year conversion we use the SPECIFIC year's inflation multiplier
+  function toTodayDollars(value, yearOffset) {
+    if (yearOffset === undefined) {
+      // 4-year totals: use average multiplier
+      return value / avgInflMult;
+    }
+    // Per-year: use that year's exact multiplier
+    const mult = Math.pow(1 + inflTotal / 100, yearsToStart + yearOffset);
+    return value / mult;
+  }
+
+  // Decide how to display a value based on the toggle
+  function disp(value, yearOffset) {
+    if (tableDollarView === 'today') return toTodayDollars(value, yearOffset);
+    return value;
+  }
+
+  // For "cheapest column" highlighting, compute which school has the best value
+  // for each numeric column. Best depends on the column: lowest for cost, highest for aid.
+  function getBestSchool(rowKey) {
+    if (results.length < 2) return null;
+    // Determine direction: lower-is-better or higher-is-better
+    const lowerBetter = ['coa', 'fromParent', 'fromStudent', 'fromLoans', 'shortfall'].includes(rowKey);
+    const higherBetter = ['meritAid'].includes(rowKey);
+    // 529 is intentionally excluded — drawing more 529 is a side-effect of
+    // higher cost, not a "win." Don't highlight it.
+    if (!lowerBetter && !higherBetter) return null;
+
+    // Find the best value
+    let bestVal = results[0].totals[rowKey];
+    for (const r of results) {
+      const val = r.totals[rowKey];
+      if (lowerBetter && val < bestVal) bestVal = val;
+      if (higherBetter && val > bestVal) bestVal = val;
+    }
+    // Count how many schools tie for the best value
+    const tied = results.filter((r) => r.totals[rowKey] === bestVal);
+    // If everyone ties, there's no meaningful "winner" — skip highlighting
+    if (tied.length === results.length) return null;
+    // Otherwise, return the first school that has the best value
+    return tied[0].id;
+  }
+
+  const bestByColumn = {
+    coa: getBestSchool('coa'),
+    meritAid: getBestSchool('meritAid'),
+    from529: null, // intentionally not highlighted — see getBestSchool comment
+    fromParent: getBestSchool('fromParent'),
+    fromStudent: getBestSchool('fromStudent'),
+    fromLoans: getBestSchool('fromLoans'),
+    shortfall: getBestSchool('shortfall'),
+  };
+
+  // Highlight class applied when this school is best for this column
+  const bestClass = 'bg-emerald-50';
+
+  return (
+    <div className="mt-6 bg-white border border-stone-200 rounded-lg p-6">
+      <div className="flex items-baseline justify-between flex-wrap gap-3 mb-4">
+        <h3 className="font-display text-xl font-medium">Side-by-side breakdown</h3>
+        <div className="flex gap-2 flex-wrap">
+          {/* Dollar view toggle */}
+          <div className="inline-flex border border-stone-300 rounded-md overflow-hidden text-xs">
+            <button
+              onClick={() => setTableDollarView('startYear')}
+              className={`px-2.5 py-1 ${tableDollarView === 'startYear' ? 'bg-emerald-700 text-white' : 'bg-white text-stone-600 hover:bg-stone-50'}`}
+            >
+              Fall {settings.startYear} $
+            </button>
+            <button
+              onClick={() => setTableDollarView('today')}
+              className={`px-2.5 py-1 ${tableDollarView === 'today' ? 'bg-emerald-700 text-white' : 'bg-white text-stone-600 hover:bg-stone-50'}`}
+            >
+              Today's $
+            </button>
+          </div>
+          {/* Year-by-year toggle */}
+          <button
+            onClick={() => setTableShowYearly(!tableShowYearly)}
+            className={`text-xs px-2.5 py-1 rounded-md border ${tableShowYearly ? 'bg-emerald-700 border-emerald-700 text-white' : 'bg-white border-stone-300 text-stone-600 hover:bg-stone-50'}`}
+          >
+            {tableShowYearly ? '✓ Year-by-year' : 'Show year-by-year'}
+          </button>
+        </div>
+      </div>
+
+      <p className="text-xs text-stone-500 mb-3">
+        Best value in each row highlighted in green (529 column excluded — drawing more 529 reflects higher cost, not a better outcome).
+        {tableDollarView === 'today' && ' Values converted to today\'s dollars using your inflation rate.'}
+      </p>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-stone-200">
+              <th className="text-left py-2 font-medium text-stone-600 sticky left-0 bg-white">School</th>
+              {tableShowYearly && <th className="text-left py-2 font-medium text-stone-600">Year</th>}
+              <th className="text-right py-2 font-medium text-stone-600">COA</th>
+              <th className="text-right py-2 font-medium text-stone-600">Merit</th>
+              <th className="text-right py-2 font-medium text-stone-600">529</th>
+              <th className="text-right py-2 font-medium text-stone-600">Parents</th>
+              <th className="text-right py-2 font-medium text-stone-600">Student</th>
+              <th className="text-right py-2 font-medium text-stone-600">Loans</th>
+              <th className="text-right py-2 font-medium text-stone-600">Gap</th>
+            </tr>
+          </thead>
+          <tbody>
+            {results.map((r) => {
+              if (!tableShowYearly) {
+                // Single row per school showing totals
+                return (
+                  <tr key={r.id} className="school-row border-b border-stone-100">
+                    <td className="py-3 font-medium sticky left-0 bg-white">{r.name}</td>
+                    <td className={`text-right py-3 ${bestByColumn.coa === r.id ? bestClass : ''}`}>
+                      {formatCurrencyShort(disp(r.totals.coa))}
+                    </td>
+                    <td className={`text-right py-3 text-emerald-700 ${bestByColumn.meritAid === r.id && r.totals.meritAid > 0 ? bestClass : ''}`}>
+                      {r.totals.meritAid > 0 ? '−' + formatCurrencyShort(disp(r.totals.meritAid)) : '—'}
+                    </td>
+                    <td className={`text-right py-3 text-emerald-700 ${bestByColumn.from529 === r.id ? bestClass : ''}`}>
+                      {formatCurrencyShort(disp(r.totals.from529))}
+                    </td>
+                    <td className={`text-right py-3 ${bestByColumn.fromParent === r.id ? bestClass : ''}`}>
+                      {formatCurrencyShort(disp(r.totals.fromParent))}
+                    </td>
+                    <td className={`text-right py-3 ${bestByColumn.fromStudent === r.id ? bestClass : ''}`}>
+                      {formatCurrencyShort(disp(r.totals.fromStudent))}
+                    </td>
+                    <td className={`text-right py-3 ${bestByColumn.fromLoans === r.id && r.totals.fromLoans > 0 ? bestClass : ''}`}>
+                      {r.totals.fromLoans > 0 ? formatCurrencyShort(disp(r.totals.fromLoans)) : '—'}
+                    </td>
+                    <td className={`text-right py-3 font-medium ${r.totals.shortfall > 0.5 ? 'text-red-600' : 'text-stone-400'} ${bestByColumn.shortfall === r.id && r.totals.shortfall > 0.5 ? bestClass : ''}`}>
+                      {r.totals.shortfall > 0.5 ? formatCurrencyShort(disp(r.totals.shortfall)) : '—'}
+                    </td>
+                  </tr>
+                );
+              }
+              // Year-by-year: 4 rows per school + 1 total row
+              return (
+                <React.Fragment key={r.id}>
+                  {r.years.map((y, idx) => (
+                    <tr key={`${r.id}-y${y.year}`} className="border-b border-stone-100">
+                      <td className="py-2 sticky left-0 bg-white">
+                        {idx === 0 && <span className="font-medium">{r.name}</span>}
+                      </td>
+                      <td className="py-2 text-stone-600 text-xs">Yr {y.year} ({y.calYear})</td>
+                      <td className="text-right py-2">{formatCurrencyShort(disp(y.coa, idx))}</td>
+                      <td className="text-right py-2 text-emerald-700">{y.meritAid > 0 ? '−' + formatCurrencyShort(disp(y.meritAid, idx)) : '—'}</td>
+                      <td className="text-right py-2 text-emerald-700">{formatCurrencyShort(disp(y.from529, idx))}</td>
+                      <td className="text-right py-2">{formatCurrencyShort(disp(y.fromParent, idx))}</td>
+                      <td className="text-right py-2">{formatCurrencyShort(disp(y.fromStudent, idx))}</td>
+                      <td className="text-right py-2">{y.fromLoans > 0 ? formatCurrencyShort(disp(y.fromLoans, idx)) : '—'}</td>
+                      <td className={`text-right py-2 ${y.shortfall > 0.5 ? 'text-red-600 font-medium' : 'text-stone-400'}`}>
+                        {y.shortfall > 0.5 ? formatCurrencyShort(disp(y.shortfall, idx)) : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                  {/* School total row */}
+                  <tr key={`${r.id}-total`} className="bg-stone-50 border-b-2 border-stone-300">
+                    <td className="py-2 sticky left-0 bg-stone-50"></td>
+                    <td className="py-2 text-stone-700 text-xs font-medium">4-yr total</td>
+                    <td className={`text-right py-2 font-semibold ${bestByColumn.coa === r.id ? bestClass : ''}`}>
+                      {formatCurrencyShort(disp(r.totals.coa))}
+                    </td>
+                    <td className={`text-right py-2 text-emerald-700 font-semibold ${bestByColumn.meritAid === r.id && r.totals.meritAid > 0 ? bestClass : ''}`}>
+                      {r.totals.meritAid > 0 ? '−' + formatCurrencyShort(disp(r.totals.meritAid)) : '—'}
+                    </td>
+                    <td className={`text-right py-2 text-emerald-700 font-semibold ${bestByColumn.from529 === r.id ? bestClass : ''}`}>
+                      {formatCurrencyShort(disp(r.totals.from529))}
+                    </td>
+                    <td className={`text-right py-2 font-semibold ${bestByColumn.fromParent === r.id ? bestClass : ''}`}>
+                      {formatCurrencyShort(disp(r.totals.fromParent))}
+                    </td>
+                    <td className={`text-right py-2 font-semibold ${bestByColumn.fromStudent === r.id ? bestClass : ''}`}>
+                      {formatCurrencyShort(disp(r.totals.fromStudent))}
+                    </td>
+                    <td className={`text-right py-2 font-semibold ${bestByColumn.fromLoans === r.id && r.totals.fromLoans > 0 ? bestClass : ''}`}>
+                      {r.totals.fromLoans > 0 ? formatCurrencyShort(disp(r.totals.fromLoans)) : '—'}
+                    </td>
+                    <td className={`text-right py-2 font-semibold ${r.totals.shortfall > 0.5 ? 'text-red-600' : 'text-stone-400'} ${bestByColumn.shortfall === r.id && r.totals.shortfall > 0.5 ? bestClass : ''}`}>
+                      {r.totals.shortfall > 0.5 ? formatCurrencyShort(disp(r.totals.shortfall)) : '—'}
+                    </td>
+                  </tr>
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );
