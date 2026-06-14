@@ -704,6 +704,59 @@ export default function CollegePlanner({ accountSlot = null }) {
                   </div>
                 </div>
               </div>
+
+              {/* Parallel cost summary — only shown when user has schools selected.
+                  Gives an apples-to-apples comparison: 529 funds vs school costs,
+                  in both today's dollars and inflated-to-start-year dollars. */}
+              {results.length > 0 && (() => {
+                // Use the lowest-cost selected school as the "what could you afford" anchor,
+                // since families are usually trying to find an affordable option, not average
+                // across reaches and safeties.
+                const sortedByCost = [...results].sort((a, b) => a.totals.coa - b.totals.coa);
+                const cheapest = sortedByCost[0];
+                const mostExpensive = sortedByCost[sortedByCost.length - 1];
+                const yearsToStart = Math.max(0, settings.startYear - 2025);
+                const avgInflMult = yearsToStart === 0 ? 1 :
+                  (Math.pow(1 + settings.coaInflation / 100, yearsToStart) +
+                   Math.pow(1 + settings.coaInflation / 100, yearsToStart + 1) +
+                   Math.pow(1 + settings.coaInflation / 100, yearsToStart + 2) +
+                   Math.pow(1 + settings.coaInflation / 100, yearsToStart + 3)) / 4;
+                const cheapestToday = cheapest.totals.coa / avgInflMult;
+                const mostExpensiveToday = mostExpensive.totals.coa / avgInflMult;
+                const gap = Math.max(0, cheapest.totals.coa - total529AtCollege);
+                return (
+                  <div className="mt-3 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                    <div className="text-xs uppercase tracking-wide text-amber-800 font-medium mb-2">
+                      Selected schools' 4-yr cost range
+                    </div>
+                    <div className="space-y-1.5 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-stone-700">In today's dollars</span>
+                        <span className="font-medium">
+                          {results.length === 1
+                            ? formatCurrency(cheapestToday)
+                            : `${formatCurrency(cheapestToday)} – ${formatCurrency(mostExpensiveToday)}`}
+                        </span>
+                      </div>
+                      <div className="flex justify-between pt-2 mt-2 border-t border-amber-200 text-base">
+                        <span className="font-medium text-amber-900">Projected at fall {settings.startYear}</span>
+                        <span className="font-semibold text-amber-900 font-display">
+                          {results.length === 1
+                            ? formatCurrency(cheapest.totals.coa)
+                            : `${formatCurrency(cheapest.totals.coa)} – ${formatCurrency(mostExpensive.totals.coa)}`}
+                        </span>
+                      </div>
+                      <div className="text-xs text-stone-500 pt-1">
+                        Cheapest option vs. projected 529: <span className="font-medium">
+                          {gap > 0
+                            ? `${formatCurrency(gap)} gap to cover with contributions, loans, or merit`
+                            : `${formatCurrency(total529AtCollege - cheapest.totals.coa)} surplus`}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             <div className="bg-white border border-stone-200 rounded-lg p-6">
@@ -1013,7 +1066,12 @@ function SchoolBrowseCard({ school, student, settings, onAdd }) {
   const satFit = getSATFit(school, student.sat);
   const isInState = settings.homeState && school.state === settings.homeState;
   const tuition = (!school.isPublic || isInState) ? school.tuitionIS : school.tuitionOOS;
-  const sticker = tuition + (school.roomBoardOn || 12000) + (school.books || 1340) + (school.otherOn || 2360);
+  const totalCOAToday = tuition + (school.roomBoardOn || 12000) + (school.books || 1340) + (school.otherOn || 2360);
+  // Project the SAME COA forward to the user's start year using their inflation setting,
+  // so the browse card and the Compare card use a consistent inflation basis.
+  const yearsToStart = Math.max(0, (settings.startYear || 2030) - 2025);
+  const inflFactor = Math.pow(1 + (settings.coaInflation || 5) / 100, yearsToStart);
+  const totalCOAAtStart = totalCOAToday * inflFactor;
   const applicableWaivers = (settings.waivers || []).filter((w) => (w.appliesToSchoolIds || []).includes(school.id));
 
   return (
@@ -1036,7 +1094,12 @@ function SchoolBrowseCard({ school, student, settings, onAdd }) {
               {satFit === 'below' && <span className="text-amber-600 font-medium"> ↓ below 25th</span>}
             </span>
           )}
-          <span>Sticker: {formatCurrencyShort(sticker)}/yr</span>
+          <span>
+            COA today: <span className="font-medium text-stone-700">{formatCurrencyShort(totalCOAToday)}/yr</span>
+            {yearsToStart > 0 && (
+              <span className="text-stone-400"> → {formatCurrencyShort(totalCOAAtStart)}/yr at fall {settings.startYear}</span>
+            )}
+          </span>
           {school.isPublic && !isInState && (
             <span>IS: {formatCurrencyShort(school.tuitionIS)} · OOS: {formatCurrencyShort(school.tuitionOOS)}</span>
           )}
@@ -1121,9 +1184,28 @@ function SchoolResultCard({ result, onRemove, onUpdateConfig, settings }) {
           </div>
         </div>
         <div className="text-right">
-          <div className="text-xs text-stone-500">4-yr cost</div>
+          <div className="text-xs text-stone-500">4-yr cost at fall {settings.startYear}</div>
           <div className="text-2xl font-display font-semibold">{formatCurrencyShort(result.totals.coa)}</div>
           <div className="text-xs text-stone-500">avg {formatCurrency(result.totals.coa / 4)}/yr</div>
+          {(() => {
+            // Show the equivalent in today's dollars, so the inflation jump is transparent.
+            const yearsToStart = Math.max(0, (settings.startYear || 2030) - 2025);
+            const inflTotal = settings.coaInflation || 5;
+            // Reverse-discount the future 4-yr total back to today's dollars at the same rate.
+            // This is the "today's-dollars equivalent" of the projected number above.
+            const avgInflMult = yearsToStart === 0
+              ? 1
+              : (Math.pow(1 + inflTotal / 100, yearsToStart) +
+                 Math.pow(1 + inflTotal / 100, yearsToStart + 1) +
+                 Math.pow(1 + inflTotal / 100, yearsToStart + 2) +
+                 Math.pow(1 + inflTotal / 100, yearsToStart + 3)) / 4;
+            const todayEquivalent = result.totals.coa / avgInflMult;
+            return yearsToStart > 0 && (
+              <div className="text-xs text-stone-400 mt-1 italic">
+                ≈ {formatCurrencyShort(todayEquivalent)} in today's dollars
+              </div>
+            );
+          })()}
         </div>
         <div className="flex flex-col gap-1">
           <button onClick={() => setExpanded(!expanded)}
