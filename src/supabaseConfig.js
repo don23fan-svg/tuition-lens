@@ -12,7 +12,7 @@
 // ============================================================================
 
 export const SUPABASE_URL = 'https://njuoajzzgycyyuopuumr.supabase.co';
-export const SUPABASE_ANON_KEY = 'your-freshly-rotated-publishable-key';
+export const SUPABASE_ANON_KEY = 'sb_publishable_w_CElcmWzY_3OK26b5nJgg_tutHxG8t';
 
 // Whether Supabase is actually configured. If not, the app stays in
 // anonymous-only mode and never shows login UI.
