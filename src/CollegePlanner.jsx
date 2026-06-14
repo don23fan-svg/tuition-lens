@@ -916,6 +916,9 @@ export default function CollegePlanner({ accountSlot = null }) {
           Cost and admissions data: IPEDS 2024-25 Provisional Release (NCES). Merit thresholds curated from each school's published programs.
           Verify all numbers directly with each school before making decisions.
         </p>
+        <p className="text-xs text-stone-400 mt-2">
+          Tuition Lens v0.4 · last updated June 14, 2026
+        </p>
       </div>
     </div>
   );
