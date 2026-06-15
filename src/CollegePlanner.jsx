@@ -1332,6 +1332,7 @@ function SchoolBrowseCard({ school, student, settings, onAdd }) {
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <h3 className="font-display text-lg font-medium">{school.name}</h3>
+          <CollegeNavigatorLink schoolId={school.id} />
           <span className="text-xs text-stone-500">{school.city ? school.city + ', ' : ''}{school.state}</span>
           {likelihood && <AdmitBadge likelihood={likelihood} />}
           {!school.isPublic && <span className="text-xs text-stone-500 italic">private</span>}
@@ -1372,6 +1373,26 @@ function SchoolBrowseCard({ school, student, settings, onAdd }) {
   );
 }
 
+function CollegeNavigatorLink({ schoolId }) {
+  // Construct the NCES College Navigator URL using the IPEDS ID.
+  // College Navigator is the federal government's authoritative school data page
+  // and includes the school's official website as one of its links.
+  if (!schoolId) return null;
+  const url = `https://nces.ed.gov/collegenavigator/?id=${schoolId}`;
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      title="Open in College Navigator (NCES)"
+      className="text-stone-400 hover:text-emerald-700 text-sm transition-colors leading-none"
+      onClick={(e) => e.stopPropagation()}
+    >
+      ↗
+    </a>
+  );
+}
+
 function AdmitBadge({ likelihood }) {
   const config = {
     safety: { label: 'Safety', bg: 'bg-emerald-100', text: 'text-emerald-900' },
@@ -1404,6 +1425,7 @@ function SchoolResultCard({ result, onRemove, onUpdateConfig, settings, total529
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <h3 className="font-display text-xl font-medium">{result.name}</h3>
+            <CollegeNavigatorLink schoolId={result.id} />
             <span className="text-xs text-stone-500">{result.state}</span>
             {result.admitLikelihood && <AdmitBadge likelihood={result.admitLikelihood} />}
           </div>
